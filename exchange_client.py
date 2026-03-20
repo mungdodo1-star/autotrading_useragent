@@ -402,18 +402,79 @@ class AgentExchangeClient:
             logger.error(f"Failed to close position: {e}")
             raise ExchangeError(f"close_position failed for {symbol}: {e}")
 
+    def _to_okx_inst_id(self, symbol: str) -> str:
+        """'BTCUSDT' → 'BTC-USDT-SWAP'"""
+        symbol = self._normalize_symbol(symbol)
+        if symbol.endswith("USDT"):
+            return f"{symbol[:-4]}-USDT-SWAP"
+        return symbol
+
+    def _to_bingx_symbol(self, symbol: str) -> str:
+        """'BTCUSDT' → 'BTC-USDT'"""
+        symbol = self._normalize_symbol(symbol)
+        if symbol.endswith("USDT"):
+            return f"{symbol[:-4]}-USDT"
+        return symbol
+
     async def get_closed_pnl(self, symbol: str, limit: int = 1) -> Optional[Dict]:
-        """마지막 청산 포지션의 PnL 정보 조회 (Bybit 전용)"""
+        """마지막 청산 포지션의 PnL 정보 조회 (다거래소 지원)"""
         try:
-            if self.exchange_id != "bybit":
-                return None
-            result = await self.exchange.private_get_v5_position_closed_pnl({
-                "category": "linear",
-                "symbol": symbol,
-                "limit": limit,
-            })
-            rows = result.get("result", {}).get("list", [])
-            return rows[0] if rows else None
+            if self.exchange_id == "bybit":
+                result = await self.exchange.private_get_v5_position_closed_pnl({
+                    "category": "linear",
+                    "symbol": symbol,
+                    "limit": limit,
+                })
+                rows = result.get("result", {}).get("list", [])
+                return rows[0] if rows else None
+
+            elif self.exchange_id == "okx":
+                result = await self.exchange.private_get_account_positions_history({
+                    "instId": self._to_okx_inst_id(symbol),
+                    "limit": limit,
+                })
+                rows = result.get("data", [])
+                if not rows:
+                    return None
+                row = rows[0]
+                return {
+                    "avgExitPrice": row.get("closeAvgPx"),
+                    "closedPnl": row.get("realizedPnl"),
+                    "createdTime": row.get("uTime"),
+                }
+
+            elif self.exchange_id == "bitget":
+                result = await self.exchange.private_get_api_v2_mix_position_history_position({
+                    "symbol": symbol,
+                    "productType": "USDT-FUTURES",
+                    "limit": limit,
+                })
+                rows = result.get("data", {}).get("list", [])
+                if not rows:
+                    return None
+                row = rows[0]
+                return {
+                    "avgExitPrice": row.get("closeAvgPrice"),
+                    "closedPnl": row.get("totalPnl"),
+                    "createdTime": row.get("utime"),
+                }
+
+            elif self.exchange_id == "bingx":
+                result = await self.exchange.swap_v1_private_get_trade_position_history({
+                    "symbol": self._to_bingx_symbol(symbol),
+                    "pageSize": limit,
+                })
+                rows = result.get("data", {}).get("positionHistory", [])
+                if not rows:
+                    return None
+                row = rows[0]
+                return {
+                    "avgExitPrice": row.get("avgClosePrice"),
+                    "closedPnl": row.get("realisedProfit"),
+                    "createdTime": row.get("updateTime"),
+                }
+
+            return None
         except Exception as e:
             logger.warning(f"get_closed_pnl failed for {symbol}: {e}")
             return None
