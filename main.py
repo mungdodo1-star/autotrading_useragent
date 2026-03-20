@@ -199,6 +199,19 @@ async def _notify_position_closed(symbol: str):
             payload["exit_price"] = str(pnl_info["avgExitPrice"])
         if pnl_info.get("closedPnl") is not None:
             payload["realized_pnl"] = str(pnl_info["closedPnl"])
+    else:
+        # closed_pnl 조회 실패 시 fills로 exit_price 추정 (Bybit API 지연 대응)
+        try:
+            fills = await client.get_recent_fills(symbol, limit=5)
+            recent = [f for f in fills if int(f.get("execTime", 0)) > detected_at_ms - 120_000]
+            if recent:
+                total_qty = sum(float(f.get("execQty", 0)) for f in recent)
+                if total_qty > 0:
+                    avg_price = sum(float(f["execPrice"]) * float(f["execQty"]) for f in recent) / total_qty
+                    payload["exit_price"] = str(round(avg_price, 8))
+                    logger.info(f"[ManualDetect] fills fallback exit_price={avg_price:.8f} ({len(recent)} fills)")
+        except Exception as e:
+            logger.warning(f"[ManualDetect] fills fallback failed: {e}")
     await _post_to_central("/api/agent/position-closed", payload)
 
 
