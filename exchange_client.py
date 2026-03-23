@@ -366,12 +366,17 @@ class AgentExchangeClient:
                     "positionIdx": 0,
                 })
             elif self.exchange_id == "bitget":
-                # 단방향 모드: place-pos-tpsl 엔드포인트 사용 (holdSide 불필요)
+                position = await self.get_position(symbol)
+                if not position:
+                    logger.warning(f"No position found to set SL for {symbol}")
+                    return False
+                hold_side = "long" if position.side == "LONG" else "short"
                 await self.exchange.private_mix_post_v2_mix_order_place_pos_tpsl({
                     "symbol": symbol,
                     "productType": "USDT-FUTURES",
                     "marginMode": "crossed",
                     "marginCoin": "USDT",
+                    "holdSide": hold_side,
                     "stopLossTriggerPrice": str(rounded_sl),
                     "stopLossTriggerType": "fill_price",
                     "stopLossExecutePrice": "0",
